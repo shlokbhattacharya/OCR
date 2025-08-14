@@ -88,7 +88,7 @@ def detect_text_regions_east(image, net, width=320, height=320):
     return results
 
 
-def ocr_filter_regions(image, regions):
+def run_ocr(image, regions):
     """
     Run Tesseract OCR on each region and only keep those predicted as single digits.
     Returns filtered list of (x, y, w, h).
@@ -97,52 +97,19 @@ def ocr_filter_regions(image, regions):
     for (x, y, w, h) in regions:
         roi = image[y:y+h, x:x+w]
         # OCR config: only digits
-        config = '--psm 10 -c tessedit_char_whitelist=0123456789'
-        text = pytesseract.image_to_string(roi, config=config).strip()
-        print(f"text: {text}\n")
-        if len(text) == 1 and text.isdigit():
-            filtered.append((x, y, w, h))
+        config = '--psm 7'
+        prediction = pytesseract.image_to_string(roi, config=config).strip()
+        print(f"text: {prediction}\n")
+        filtered.append((x, y, w, h, prediction))
     return filtered
 
 
-def contour_proposals(binary_img, min_size=20, max_size=300):
+def detect_and_prepare_digits(img):
     """
-    Find contours in a binary image and return bounding boxes within size thresholds.
-    """
-    contours, _ = cv2.findContours(binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes = []
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        if min_size < w < max_size and min_size < h < max_size:
-            boxes.append((x, y, w, h))
-    return boxes
-
-
-def process_roi_to_mnist(roi):
-    """
-    Convert an ROI to a 28x28 grayscale image centered like MNIST.
-    """
-    # Resize to 20x20
-    roi = cv2.resize(roi, (20, 20), interpolation=cv2.INTER_AREA)
-    # Pad to 28x28
-    padded = np.pad(roi, ((4, 4), (4, 4)), mode='constant', constant_values=0)
-    # Center mass
-    cy, cx = center_of_mass(padded)
-    shift_x = int(np.round(14 - cx))
-    shift_y = int(np.round(14 - cy))
-    M = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
-    centered = cv2.warpAffine(padded, M, (28, 28))
-    return centered
-
-
-def detect_and_prepare_digits(image_path, model):
-    """
-    Full pipeline: load, color filter, text-region detect, OCR filter, contours,
-    prepare each ROI, then predict with the model.
+    Full pipeline: load, color filter, text-region detect, OCR.
     Returns list of (x, y, prediction).
     """
     # Load image
-    img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # 1. Color filtering
@@ -157,33 +124,22 @@ def detect_and_prepare_digits(image_path, model):
     text_regions = detect_text_regions_east(img, net)
 
     # 3. OCR filter
-    ocr_regions = ocr_filter_regions(gray, text_regions)
-
-    # 4. Contour proposals on combined mask
-    contour_regions = contour_proposals(combined)
-
-    # Merge proposals
-    all_regions = ocr_regions + contour_regions
-    # Optionally: apply non-max suppression on all_regions
-
-    results = []
-    for (x, y, w, h) in all_regions:
-        roi = combined[y:y+h, x:x+w]
-        digit_img = process_roi_to_mnist(roi)
-        norm = digit_img.astype('float32') / 255.0
-        inp = norm.reshape(1, 28, 28, 1)
-        pred = np.argmax(model.predict(inp), axis=1)[0]
-        results.append((x, y, pred))
-
-    return results
+    return run_ocr(img, text_regions)
     
 
 
 if __name__ == '__main__':
     # Example usage:
     # from tensorflow.keras.models import load_model
+    # image_path = '/Users/shlokbhattacharya/Downloads/8629.jpeg'
+    image_path = '/Users/shlokbhattacharya/Desktop/OCR_Project/opencv-text-detection/images/lebron_james.jpg'
+    img = cv2.imread(image_path)
     model = load_model('src/model/CNN_model.keras')
-    # digits = detect_and_prepare_digits('/Users/shlokbhattacharya/Downloads/IMG_8629.jpeg', model)
-    digits = detect_and_prepare_digits('/Users/shlokbhattacharya/Desktop/OCR_Project/opencv-text-detection/images/sign.jpg', model)
+    digits = detect_and_prepare_digits(img)
+    # digits = detect_and_prepare_digits('/Users/shlokbhattacharya/Desktop/OCR_Project/opencv-text-detection/images/lebron_james.jpg')
+
+    config = '--psm 7'
+    prediction = pytesseract.image_to_string(img, config=config).strip()
+
     print(digits)
-    # pass
+    print(prediction)
