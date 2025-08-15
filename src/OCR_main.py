@@ -1,15 +1,4 @@
 """
-mnist_draw_gui.py
-
-Usage:
-    python mnist_draw_gui.py --model path/to/your/keras_model.h5
-
-Or from another script:
-    from tensorflow.keras.models import load_model
-    model = load_model("...")   # or however you already have it loaded
-    app = DigitDrawGUI(model=model)
-    app.run()
-
 Requirements:
     - Python 3.8+
     - Pillow
@@ -23,7 +12,7 @@ What it does:
         * adds padding, resizes to 20x20 while preserving aspect ratio,
         * centers the glyph in a 28x28 image using center-of-mass,
         * normalizes pixel values to [0,1] and sends (1,28,28,1) to model.predict
-    - Shows prediction and confidence in the GUI.
+    - Shows prediction in the GUI.
 """
 
 import tkinter as tk
@@ -31,12 +20,13 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageDraw
 import numpy as np
 from tensorflow.keras.models import load_model
+import cv2
 
 THRESHOLD_VALUE = 50
 
 
 class DigitDrawGUI:
-    def __init__(self, model=None, canvas_size=280, stroke_width=5):
+    def __init__(self, model=None, canvas_size=1024, stroke_width=5):
         """
         model: either a Keras model object with model.predict or None.
         canvas_size: width/height of drawing canvas in pixels.
@@ -69,18 +59,12 @@ class DigitDrawGUI:
         self.predict_label = ttk.Label(main, text="Prediction: —", font=("Helvetica", 14))
         self.predict_label.grid(row=0, column=1, sticky="w")
 
-        self.conf_label = ttk.Label(main, text="Confidence: —", font=("Helvetica", 10))
-        self.conf_label.grid(row=1, column=1, sticky="w", pady=(2, 10))
-
         btn_frame = ttk.Frame(main)
         btn_frame.grid(row=2, column=1, sticky="we", pady=(6, 0))
         btn_frame.columnconfigure((0, 1), weight=1)
 
         self.clear_btn = ttk.Button(btn_frame, text="Clear", command=self.clear_canvas)
         self.clear_btn.grid(row=0, column=0, sticky="we", padx=(0, 6))
-
-        self.predict_btn = ttk.Button(btn_frame, text="Predict", command=self.manual_predict)
-        self.predict_btn.grid(row=0, column=1, sticky="we")
 
         # Status bar
         self.status = ttk.Label(self.root, text="Draw digit by holding left mouse button. Release to predict.", relief="sunken",
@@ -140,14 +124,13 @@ class DigitDrawGUI:
         # draw bounding box with some small margin
         self.draw_bounding_box()
         # automatically run prediction
-        self._predict_and_display()
+        self.predict_and_display()
         # reset last coords
         self._last_x = None
         self._last_y = None
 
     # ---------- Utilities ----------
     def draw_bounding_box(self):
-        # remove previous box if any
         if self._box_id:
             self.canvas.delete(self._box_id)
             self._box_id = None
@@ -162,7 +145,7 @@ class DigitDrawGUI:
         y1 = min(self.canvas_size, self._max_y + margin)
 
         self._box_coords = (x0, y0, x1, y1)
-        self._box_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2)
+        self._box_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#FF0000", width=2)
 
     def clear_canvas(self):
         self.canvas.delete("all")
@@ -179,47 +162,9 @@ class DigitDrawGUI:
         self._box_coords = None
         self._box_id = None
         self.predict_label.config(text="Prediction: —")
-        self.conf_label.config(text="Confidence: —")
 
     # ---------- Preprocessing (MNIST style) ----------
-    def preprocess_for_mnist(self, img, box_coords=None):
-        """
-        Input:
-            img: PIL.Image in 'L' mode (0 black - 255 white), same size as canvas
-            box_coords: (x0,y0,x1,y1) optional; if None, compute from non-zero pixels
-        Returns:
-            processed: numpy array shape (1,28,28,1) dtype float32 normalized 0..1
-            pil28: the 28x28 PIL image (L) for debug/save
-        Steps:
-            - crop to bounding box (with padding)
-            - resize keeping aspect ratio so that largest side is 20
-            - paste centered into 28x28
-            - shift to center-of-mass at (14,14)
-            - normalize to 0..1
-        """
-        if box_coords is None:
-            arr = np.array(img)
-            ys, xs = np.where(arr > 10)
-            if len(xs) == 0:
-                # nothing drawn
-                return None, None
-            x0, x1 = xs.min(), xs.max()
-            y0, y1 = ys.min(), ys.max()
-        else:
-            x0, y0, x1, y1 = box_coords
-
-        # add extra padding (10-20% of max dimension)
-        w = x1 - x0
-        h = y1 - y0
-        pad = int(max(w, h) * 0.18) + 2
-        x0 = max(0, x0 - pad)
-        y0 = max(0, y0 - pad)
-        x1 = min(self.canvas_size, x1 + pad)
-        y1 = min(self.canvas_size, y1 + pad)
-
-        crop = img.crop((x0, y0, x1, y1))
-
-        # Resize to fit in 20x20 box while preserving aspect ratio
+    def preprocess_for_mnist(self, crop: Image.Image):
         crop_w, crop_h = crop.size
         if crop_w > crop_h:
             new_w = 20
@@ -268,54 +213,86 @@ class DigitDrawGUI:
 
         return final_arr, new_image
 
-    # ---------- Prediction ----------
-    def _predict_and_display(self):
-        # If no drawing, do nothing
-        if not self._drawn or len(self._points) == 0:
-            self.status.config(text="Nothing drawn to predict.")
+    def find_digit_bboxes(self, pil_img: Image.Image, min_area: int = 30) -> list:
+        """
+        Returns list of (x0, y0, x1, y1) bounding boxes for each connected component,
+        sorted left-to-right. Filters tiny noise via min_area.
+        """
+        arr = np.array(pil_img)        # shape (H,W), dtype=uint8, 0..255
+        _, bw = cv2.threshold(arr, THRESHOLD_VALUE, 255, cv2.THRESH_BINARY)
+
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boxes = []
+        H, W = bw.shape[:2]
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if w * h >= min_area:
+                m = max(2, int(0.05 * max(w, h)))
+                x0 = max(0, x - m)
+                y0 = max(0, y - m)
+                x1 = min(W, x + w + m)
+                y1 = min(H, y + h + m)
+                boxes.append((x0, y0, x1, y1))
+        # sort left→right
+        boxes.sort(key=lambda b: b[0])
+        return boxes
+
+    # # ---------- Prediction ----------
+    def predict_and_display(self):
+        """
+        Detects all digits, predicts each, annotates the canvas, and updates labels.
+        """
+        # Clear previous annotations
+        if hasattr(self, "_anno_ids"):
+            for _id in self._anno_ids:
+                try:
+                    self.canvas.delete(_id)
+                except Exception:
+                    pass
+        self._anno_ids = []
+
+        boxes = self.find_digit_bboxes(self.image)
+        if not boxes:
+            if hasattr(self, "predict_label"):
+                self.predict_label.config(text="Prediction: —")
+            if hasattr(self, "status"):
+                self.status.config(text="No digits detected.")
             return
 
-        array28, pil28 = self.preprocess_for_mnist(self.image, getattr(self, "_box_coords", None))
-        if array28 is None:
-            self.status.config(text="Unable to process drawing.")
-            return
+        preds = []
+        for (x0, y0, x1, y1) in boxes:
+            crop = self.image.crop((x0, y0, x1, y1))
+            arr28, pil28 = self.preprocess_for_mnist(crop)
+            if arr28 is None:
+                preds.append(("?", 0.0, (x0, y0, x1, y1)))
+                continue
+            if self.model is None:
+                digit, conf = "?", 0.0
+            else:
+                out = self.model.predict(arr28)
+                if out.ndim == 2 and out.shape[1] >= 10:
+                    probs = out[0]
+                    digit = int(np.argmax(probs))
+                    conf = float(probs[digit])
+                else:
+                    digit = int(np.argmax(out[0]))
+                    conf = float(np.max(out[0]))
+            preds.append((digit, conf, (x0, y0, x1, y1)))
 
-        if self.model is None:
-            self.status.config(text="No model loaded; preprocessing shown.")
-            self.predict_label.config(text="Prediction: (no model)")
-            self.conf_label.config(text="Confidence: —")
-            return
+        seq = []
+        for digit, conf, (x0, y0, x1, y1) in preds:
+            rid = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2)
+            self._anno_ids.append(rid)
+            label = f"{digit}" if isinstance(digit, int) else digit
+            label_y = y0 - 10 if y0 > 15 else y1 + 10
+            tid = self.canvas.create_text((x0 + x1) // 2, label_y, text=label, fill="#00FF00", font=("Helvetica", 14, "bold"))
+            self._anno_ids.append(tid)
+            seq.append(str(label))
 
-        # Model expects shape (1,28,28,1)
-        try:
-            preds = self.model.predict(array28)
-        except Exception as e:
-            messagebox.showerror("Predict error", f"Model prediction failed:\n{e}")
-            return
-
-        # handle different output shapes
-        if preds.ndim == 2 and preds.shape[1] >= 10:
-            probs = preds[0]
-            digit = int(np.argmax(probs))
-            conf = float(probs[digit])
-        else:
-            # fallback: if model returns a single scalar or categoricals
-            digit = int(np.argmax(preds[0]))
-            probs = None
-            conf = None
-            if hasattr(preds[0], "__len__") and len(preds[0]) > 0:
-                conf = float(max(preds[0]))
-        self.predict_label.config(text=f"Prediction: {digit}")
-        if conf is not None:
-            self.conf_label.config(text=f"Confidence: {conf:.3f}")
-        else:
-            self.conf_label.config(text=f"Confidence: —")
-        self.status.config(text="Prediction complete.")
-
-    def manual_predict(self):
-        # Force prediction (useful if model not auto-run)
-        self._predict_and_display()
-
+        if hasattr(self, "predict_label"):
+            self.predict_label.config(text=f"Prediction: {' '.join(seq)}")
+        if hasattr(self, "status"):
+            self.status.config(text="Multi-digit prediction complete.")
 
     def run(self):
         self.root.mainloop()
