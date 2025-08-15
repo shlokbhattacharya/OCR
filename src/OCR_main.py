@@ -28,14 +28,15 @@ What it does:
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageDraw, ImageTk, ImageChops
+from PIL import Image, ImageDraw
 import numpy as np
-import os
 from tensorflow.keras.models import load_model
+
+THRESHOLD_VALUE = 50
 
 
 class DigitDrawGUI:
-    def __init__(self, model=None, canvas_size=280, stroke_width=15):
+    def __init__(self, model=None, canvas_size=280, stroke_width=5):
         """
         model: either a Keras model object with model.predict or None.
         canvas_size: width/height of drawing canvas in pixels.
@@ -81,9 +82,6 @@ class DigitDrawGUI:
         self.predict_btn = ttk.Button(btn_frame, text="Predict", command=self.manual_predict)
         self.predict_btn.grid(row=0, column=1, sticky="we")
 
-        self.save_btn = ttk.Button(main, text="Save 28x28 (debug)", command=self.save_processed_debug)
-        self.save_btn.grid(row=3, column=1, sticky="we", pady=(10, 0))
-
         # Status bar
         self.status = ttk.Label(self.root, text="Draw digit by holding left mouse button. Release to predict.", relief="sunken",
                                 anchor="w")
@@ -107,10 +105,6 @@ class DigitDrawGUI:
         # Keep a small track of strokes so we can compute bbox robustly
         self._points = []
 
-        # Keep a preview image (tkinter) for the processed 28x28 to show debug (optional)
-        self.preview_win = None
-
-    # ---------- Drawing event handlers ----------
     def on_button_press(self, event):
         self._last_x, self._last_y = event.x, event.y
         self._drawn = True
@@ -265,6 +259,8 @@ class DigitDrawGUI:
 
             new_image = Image.fromarray(arr.astype(np.uint8))
 
+            new_image = new_image.point(lambda p: 255 if p > THRESHOLD_VALUE else 0)
+
         # Normalize to [0,1] float
         final_arr = np.array(new_image).astype(np.float32) / 255.0
         # MNIST typically has white digits on black background; keep that convention.
@@ -283,9 +279,6 @@ class DigitDrawGUI:
         if array28 is None:
             self.status.config(text="Unable to process drawing.")
             return
-
-        # Show small preview window with 28x28 for debug
-        self.show_preview(pil28)
 
         if self.model is None:
             self.status.config(text="No model loaded; preprocessing shown.")
@@ -323,29 +316,6 @@ class DigitDrawGUI:
         # Force prediction (useful if model not auto-run)
         self._predict_and_display()
 
-    # ---------- Debug/save helpers ----------
-    def save_processed_debug(self):
-        array28, pil28 = self.preprocess_for_mnist(self.image, getattr(self, "_box_coords", None))
-        if array28 is None or pil28 is None:
-            messagebox.showinfo("Save", "Nothing to save (no drawing).")
-            return
-        outpath = "mnist_preview_28x28.png"
-        pil28.save(outpath)
-        messagebox.showinfo("Saved", f"Saved processed 28x28 image to: {os.path.abspath(outpath)}")
-
-    def show_preview(self, pil_img_28):
-        # Show (or update) a small preview window for the 28x28 processed image (scaled up to view)
-        scaled = pil_img_28.resize((140, 140), Image.NEAREST)
-        if self.preview_win is None or not tk.Toplevel.winfo_exists(self.preview_win):
-            self.preview_win = tk.Toplevel(self.root)
-            self.preview_win.title("28x28 preview")
-            label = ttk.Label(self.preview_win)
-            label.pack(padx=6, pady=6)
-            self.preview_label = label
-        imgtk = ImageTk.PhotoImage(scaled)
-        # keep a reference to avoid garbage collection
-        self.preview_label.imgtk = imgtk
-        self.preview_label.configure(image=imgtk)
 
     def run(self):
         self.root.mainloop()
@@ -353,7 +323,7 @@ class DigitDrawGUI:
 
 def main():
     model = load_model('src/model/CNN_model.keras')
-    app = DigitDrawGUI(model=model, canvas_size=280, stroke_width=15)
+    app = DigitDrawGUI(model=model)
     app.run()
 
 
