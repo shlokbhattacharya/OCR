@@ -17,16 +17,16 @@ What it does:
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageTk
 import numpy as np
 from tensorflow.keras.models import load_model
 import cv2
 
 THRESHOLD_VALUE = 50
-
+STANDARD_STROKE_WIDTH = 5
 
 class DigitDrawGUI:
-    def __init__(self, model=None, canvas_size=1024, stroke_width=5):
+    def __init__(self, model=None, canvas_size=1024, stroke_width=STANDARD_STROKE_WIDTH):
         """
         model: either a Keras model object with model.predict or None.
         canvas_size: width/height of drawing canvas in pixels.
@@ -35,6 +35,7 @@ class DigitDrawGUI:
         self.model = model
         self.canvas_size = canvas_size
         self.stroke_width = stroke_width
+        self.stroke_color = "white"
 
         # Tkinter root
         self.root = tk.Tk()
@@ -63,8 +64,14 @@ class DigitDrawGUI:
         btn_frame.grid(row=2, column=1, sticky="we", pady=(6, 0))
         btn_frame.columnconfigure((0, 1), weight=1)
 
+        self.eraser_btn = ttk.Button(btn_frame, text="Eraser", command=self.toggle_eraser)
+        self.eraser_btn.grid(row=0, column=0, sticky="we", padx=(0, 6)) 
+
+        self.undo_btn = ttk.Button(btn_frame, text="Undo Stroke", command=self.undo_stroke)
+        self.undo_btn.grid(row=1, column=0, sticky="we", padx=(0, 6)) 
+
         self.clear_btn = ttk.Button(btn_frame, text="Clear", command=self.clear_canvas)
-        self.clear_btn.grid(row=0, column=0, sticky="we", padx=(0, 6))
+        self.clear_btn.grid(row=2, column=0, sticky="we", padx=(0, 6))
 
         # Status bar
         self.status = ttk.Label(self.root, text="Draw digit by holding left mouse button. Release to predict.", relief="sunken",
@@ -86,13 +93,13 @@ class DigitDrawGUI:
         self._max_y = 0
         self._box_id = None
 
-        # Keep a small track of strokes so we can compute bbox robustly
-        self._points = []
+        self._strokes = []
+        self._temp_points = []
+        self._image_history = [self.image.copy()]
 
     def on_button_press(self, event):
         self._last_x, self._last_y = event.x, event.y
         self._drawn = True
-        self._points.append((event.x, event.y))
         # update bbox
         self._min_x = min(self._min_x, event.x)
         self._min_y = min(self._min_y, event.y)
@@ -104,27 +111,32 @@ class DigitDrawGUI:
             return
         x, y = event.x, event.y
         # draw line on canvas
-        self.canvas.create_line(self._last_x, self._last_y, x, y,
-                                fill="white", width=self.stroke_width, capstyle=tk.ROUND, smooth=True)
+        line_id = self.canvas.create_line(self._last_x, self._last_y, x, y,
+                                fill=self.stroke_color, width=self.stroke_width, capstyle=tk.ROUND, smooth=True)
+        self._temp_points.append(line_id)
         # draw on PIL image (white)
-        self.draw.line([self._last_x, self._last_y, x, y], fill=255, width=self.stroke_width)
+        fill_color = 255 if self.stroke_color == "white" else 0
+        self.draw.line([self._last_x, self._last_y, x, y], fill=fill_color, width=self.stroke_width)
+        self.canvas.tag_raise("front_drawing", 'all')
         # update bbox
         self._min_x = min(self._min_x, x, self._last_x)
         self._min_y = min(self._min_y, y, self._last_y)
         self._max_x = max(self._max_x, x, self._last_x)
         self._max_y = max(self._max_y, y, self._last_y)
         self._last_x, self._last_y = x, y
-        self._points.append((x, y))
 
     def on_button_release(self, event):
         if not self._drawn:
             return
         # finalize last point
-        self._points.append((event.x, event.y))
+        self._strokes.append(self._temp_points[:])
+        self._temp_points.clear()
         # draw bounding box with some small margin
         self.draw_bounding_box()
         # automatically run prediction
         self.predict_and_display()
+        # store image in memory
+        self._image_history.append(self.image.copy())
         # reset last coords
         self._last_x = None
         self._last_y = None
@@ -145,7 +157,7 @@ class DigitDrawGUI:
         y1 = min(self.canvas_size, self._max_y + margin)
 
         self._box_coords = (x0, y0, x1, y1)
-        self._box_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#FF0000", width=2)
+        self._box_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#FF0000", width=2, tags=("front_drawing"))
 
     def clear_canvas(self):
         self.canvas.delete("all")
@@ -158,11 +170,36 @@ class DigitDrawGUI:
         self._min_y = self.canvas_size
         self._max_x = 0
         self._max_y = 0
-        self._points.clear()
+        self._strokes.clear()
+        self._temp_points.clear()
+        self._image_history = [self.image.copy()]
         self._box_coords = None
         self._box_id = None
         self.predict_label.config(text="Prediction: —")
 
+    def toggle_eraser(self):
+        if self.eraser_btn["text"] == "Eraser":
+            self.stroke_color = "black"
+            self.stroke_width = 3 * STANDARD_STROKE_WIDTH
+            self.eraser_btn.configure(text="Pen")
+        else: 
+            self.stroke_color = "white"
+            self.stroke_width = STANDARD_STROKE_WIDTH
+            self.eraser_btn.configure(text="Eraser")
+
+    def undo_stroke(self):
+        if len(self._image_history) <= 1 or not self._strokes:
+            return
+        
+        self._image_history.pop()
+        last_image = self._image_history[-1].copy()
+        self.image = last_image
+        self.draw = ImageDraw.Draw(self.image)
+        
+        last_stroke = self._strokes.pop()
+        self.canvas.delete(*last_stroke)
+        self.predict_and_display()
+        
     # ---------- Preprocessing (MNIST style) ----------
     def preprocess_for_mnist(self, crop: Image.Image):
         crop_w, crop_h = crop.size
@@ -281,11 +318,11 @@ class DigitDrawGUI:
 
         seq = []
         for digit, conf, (x0, y0, x1, y1) in preds:
-            rid = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2)
+            rid = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2, tags=("front_drawing"))
             self._anno_ids.append(rid)
             label = f"{digit}" if isinstance(digit, int) else digit
             label_y = y0 - 10 if y0 > 15 else y1 + 10
-            tid = self.canvas.create_text((x0 + x1) // 2, label_y, text=label, fill="#00FF00", font=("Helvetica", 14, "bold"))
+            tid = self.canvas.create_text((x0 + x1) // 2, label_y, text=label, fill="#00FF00", font=("Helvetica", 14, "bold"), tags=("front_drawing"))
             self._anno_ids.append(tid)
             seq.append(str(label))
 
