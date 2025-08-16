@@ -1,0 +1,23 @@
+"""Global constants for OCR application"""
+
+class Colors:
+    DIGIT_BOX = "#00FF00"
+    NUMBER_BOX = "#FF0000"
+    CANVAS_BG = "black"
+    STROKE_COLOR = "white"
+
+class ProcessingConfig:
+    THRESHOLD_VALUE = 50
+    MIN_DIGIT_AREA = 30
+    STANDARD_STROKE_WIDTH = 5
+
+class UIConfig:
+    CANVAS_SIZE = 1024
+    ERASER_MULTIPLIER = 5
+
+THRESHOLD_VALUE = ProcessingConfig.THRESHOLD_VALUE
+STANDARD_STROKE_WIDTH = ProcessingConfig.STANDARD_STROKE_WIDTH
+DIGIT_BOX_COLOR = Colors.DIGIT_BOX
+NUMBER_BOX_COLOR = Colors.NUMBER_BOX
+CANVAS_SIZE = UIConfig.CANVAS_SIZE
+ERASER_MULTIPLIER = UIConfig.ERASER_MULTIPLIER
