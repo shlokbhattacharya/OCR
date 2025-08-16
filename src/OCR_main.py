@@ -1,20 +1,3 @@
-"""
-Requirements:
-    - Python 3.8+
-    - Pillow
-    - numpy
-    - tensorflow (or tensorflow-cpu) if you want to actually run a Keras model
-
-What it does:
-    - Hold left mouse button to paint white on a black canvas.
-    - On mouse release it draws a bounding box and automatically:
-        * crops the drawn area,
-        * adds padding, resizes to 20x20 while preserving aspect ratio,
-        * centers the glyph in a 28x28 image using center-of-mass,
-        * normalizes pixel values to [0,1] and sends (1,28,28,1) to model.predict
-    - Shows prediction in the GUI.
-"""
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageDraw, ImageTk
@@ -24,8 +7,11 @@ import cv2
 
 THRESHOLD_VALUE = 50
 STANDARD_STROKE_WIDTH = 5
+DIGIT_BOX_COLOR = "#00FF00"
+NUMBER_BOX_COLOR = "#FF0000"
 
 class DigitDrawGUI:
+
     def __init__(self, model=None, canvas_size=1024, stroke_width=STANDARD_STROKE_WIDTH):
         """
         model: either a Keras model object with model.predict or None.
@@ -131,8 +117,6 @@ class DigitDrawGUI:
         # finalize last point
         self._strokes.append(self._temp_points[:])
         self._temp_points.clear()
-        # draw bounding box with some small margin
-        self.draw_bounding_box()
         # automatically run prediction
         self.predict_and_display()
         # store image in memory
@@ -142,23 +126,6 @@ class DigitDrawGUI:
         self._last_y = None
 
     # ---------- Utilities ----------
-    def draw_bounding_box(self):
-        if self._box_id:
-            self.canvas.delete(self._box_id)
-            self._box_id = None
-
-        if self._min_x >= self._max_x or self._min_y >= self._max_y:
-            return
-
-        margin = int(max(2, 0.05 * max(self._max_x - self._min_x, self._max_y - self._min_y)))
-        x0 = max(0, self._min_x - margin)
-        y0 = max(0, self._min_y - margin)
-        x1 = min(self.canvas_size, self._max_x + margin)
-        y1 = min(self.canvas_size, self._max_y + margin)
-
-        self._box_coords = (x0, y0, x1, y1)
-        self._box_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#FF0000", width=2, tags=("front_drawing"))
-
     def clear_canvas(self):
         self.canvas.delete("all")
         self.image = Image.new("L", (self.canvas_size, self.canvas_size), color=0)
@@ -200,7 +167,7 @@ class DigitDrawGUI:
         self.canvas.delete(*last_stroke)
         self.predict_and_display()
         
-    # ---------- Preprocessing (MNIST style) ----------
+    # ---------- Image Preprocessing ----------
     def preprocess_for_mnist(self, crop: Image.Image):
         crop_w, crop_h = crop.size
         if crop_w > crop_h:
@@ -245,17 +212,17 @@ class DigitDrawGUI:
 
         # Normalize to [0,1] float
         final_arr = np.array(new_image).astype(np.float32) / 255.0
-        # MNIST typically has white digits on black background; keep that convention.
+        
         final_arr = final_arr.reshape(1, 28, 28, 1)
 
         return final_arr, new_image
 
     def find_digit_bboxes(self, pil_img: Image.Image, min_area: int = 30) -> list:
         """
-        Returns list of (x0, y0, x1, y1) bounding boxes for each connected component,
-        sorted left-to-right. Filters tiny noise via min_area.
+        Returns list of (x0, y0, x1, y1) bounding boxes for each connected component.
+        Filters tiny noise via min_area.
         """
-        arr = np.array(pil_img)        # shape (H,W), dtype=uint8, 0..255
+        arr = np.array(pil_img)
         _, bw = cv2.threshold(arr, THRESHOLD_VALUE, 255, cv2.THRESH_BINARY)
 
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -270,14 +237,151 @@ class DigitDrawGUI:
                 x1 = min(W, x + w + m)
                 y1 = min(H, y + h + m)
                 boxes.append((x0, y0, x1, y1))
-        # sort left→right
-        boxes.sort(key=lambda b: b[0])
         return boxes
+    
+    def group_digits(self, digit_predictions):
+        """
+        Groups nearby digits using graph-search-based approach that checks all possible pairs.
+        """
+        if not digit_predictions:
+            return []
+        
+        if len(digit_predictions) == 1:
+            return [digit_predictions]
+        
+        # Create adjacency list for digits that should be grouped
+        n = len(digit_predictions)
+        graph = [[] for _ in range(n)]
+        
+        # Check all pairs to see if they should be grouped
+        for i in range(n):
+            for j in range(i + 1, n):
+                digit_i = digit_predictions[i]
+                digit_j = digit_predictions[j]
+                
+                # Extract bounding box coordinates
+                i_x0, i_y0, i_x1, i_y1 = digit_i[2]
+                j_x0, j_y0, j_x1, j_y1 = digit_j[2]
+                
+                # Calculate metrics
+                i_height = i_y1 - i_y0
+                j_height = j_y1 - j_y0
+                i_width = i_x1 - i_x0
+                j_width = j_x1 - j_x0
+                
+                i_center_y = (i_y0 + i_y1) / 2
+                j_center_y = (j_y0 + j_y1) / 2
+                
+                # Calculate horizontal gap (can be negative if overlapping)
+                if i_x0 < j_x0:  # i is to the left of j
+                    horizontal_gap = j_x0 - i_x1
+                else:  # j is to the left of i
+                    horizontal_gap = i_x0 - j_x1
+                
+                # Check grouping criteria
+                same_line = self._are_on_same_line(i_center_y, j_center_y, i_height, j_height)
+                close_horizontally = self._are_close_horizontally(horizontal_gap, i_height, j_height)
+                                
+                if same_line and close_horizontally:
+                    graph[i].append(j)
+                    graph[j].append(i)
+        
+        # Find connected components using DFS
+        groups = self._run_dfs(graph, n, digit_predictions)
+        
+        # Sort each group by x-coordinate (left to right)
+        for group in groups:
+            group.sort(key=lambda d: d[2][0])
+        
+        # Sort groups by reading-style (top->bottom, left->right)
+        groups.sort(key=lambda g: (round((g[0][2][1]+g[0][2][3])/2, -1), g[0][2][0]))
+        
+        return groups
+    
+    def _run_dfs(self, graph, n, digit_predictions):
+        visited = [False] * n
+        groups = []
+        
+        for i in range(n):
+            if not visited[i]:
+                group = []
+                stack = [i]
+                
+                while stack:
+                    node = stack.pop()
+                    if not visited[node]:
+                        visited[node] = True
+                        group.append(digit_predictions[node])
+                        
+                        # Add all unvisited neighbors
+                        for neighbor in graph[node]:
+                            if not visited[neighbor]:
+                                stack.append(neighbor)
+                
+                groups.append(group)
+        
+        return groups
+
+    def _are_on_same_line(self, y1, y2, h1, h2):
+        """Check if two digits are on the same horizontal line"""
+        # Allow some vertical overlap/misalignment based on digit heights
+        max_height = max(h1, h2)
+        vertical_tolerance = max_height * 0.3  # 30% of the larger digit's height
+        return abs(y1 - y2) <= vertical_tolerance
+
+    def _are_close_horizontally(self, gap, h1, h2):
+        """Check if two digits are sufficiently close horizontally"""
+        avg_height = (h1 + h2) / 2
+        
+        # Max gap is proportional to digit height
+        max_gap = avg_height * 0.4
+        
+        return gap <= max_gap
+
+    def format_grouped_predictions(self, groups):
+        """
+        Convert grouped digit predictions into formatted strings and annotations
+        
+        Args:
+            groups: List of digit groups from group_digits()
+        
+        Returns:
+            List of tuples: (number_string, confidence_avg, overall_bbox)
+        """
+        formatted_groups = []
+        
+        for group in groups:
+            if not group:
+                continue
+                
+            # Sort digits in group by x-coordinate (left to right)
+            sorted_group = sorted(group, key=lambda d: d[2][0])
+            
+            # Build number string
+            number_str = ''.join(str(digit[0]) for digit in sorted_group)
+            
+            # Calculate average confidence
+            avg_confidence = sum(digit[1] for digit in sorted_group) / len(sorted_group)
+            
+            bbox_margin = 10
+
+            # Calculate overall bounding box for the group
+            all_x0 = [digit[2][0] - bbox_margin for digit in sorted_group]
+            all_y0 = [digit[2][1] - bbox_margin for digit in sorted_group]
+            all_x1 = [digit[2][2] + bbox_margin for digit in sorted_group]
+            all_y1 = [digit[2][3] + bbox_margin for digit in sorted_group]
+            
+            group_bbox = (min(all_x0), min(all_y0), max(all_x1), max(all_y1))
+            
+            formatted_groups.append((number_str, avg_confidence, group_bbox))
+        
+        return formatted_groups
+
 
     # # ---------- Prediction ----------
     def predict_and_display(self):
         """
-        Detects all digits, predicts each, annotates the canvas, and updates labels.
+        Detects all digits, groups them into numbers, predicts each, and updates display.
         """
         # Clear previous annotations
         if hasattr(self, "_anno_ids"):
@@ -296,17 +400,16 @@ class DigitDrawGUI:
                 self.status.config(text="No digits detected.")
             return
 
-        preds = []
+        # Get individual digit predictions
+        digit_preds = []
         for (x0, y0, x1, y1) in boxes:
             crop = self.image.crop((x0, y0, x1, y1))
             arr28, pil28 = self.preprocess_for_mnist(crop)
             if arr28 is None:
-                preds.append(("?", 0.0, (x0, y0, x1, y1)))
+                digit_preds.append(("?", 0.0, (x0, y0, x1, y1)))
                 continue
-            if self.model is None:
-                digit, conf = "?", 0.0
             else:
-                out = self.model.predict(arr28)
+                out = self.model.predict(arr28, verbose=0)
                 if out.ndim == 2 and out.shape[1] >= 10:
                     probs = out[0]
                     digit = int(np.argmax(probs))
@@ -314,22 +417,48 @@ class DigitDrawGUI:
                 else:
                     digit = int(np.argmax(out[0]))
                     conf = float(np.max(out[0]))
-            preds.append((digit, conf, (x0, y0, x1, y1)))
+            digit_preds.append((digit, conf, (x0, y0, x1, y1)))
+
+        # Group digits into numbers
+        groups = self.group_digits(digit_preds)
+        formatted_groups = self.format_grouped_predictions(groups)
+
+        # Draw annotations for each group
+        all_numbers = []
+        for number_str, avg_conf, (gx0, gy0, gx1, gy1) in formatted_groups:
+            if len(number_str) > 1: 
+                # Draw bounding box around the entire number
+                rid = self.canvas.create_rectangle(gx0, gy0, gx1, gy1, outline=NUMBER_BOX_COLOR, 
+                                                width=3, tags=("front_drawing"))
+                self._anno_ids.append(rid)
+                
+                # Add number label
+                label_y = gy0 - 15 if gy0 > 20 else gy1 + 15
+                tid = self.canvas.create_text((gx0 + gx1) // 2, label_y, text=number_str, 
+                                            fill=NUMBER_BOX_COLOR, font=("Helvetica", 16, "bold"), 
+                                            tags=("front_drawing"))
+                self._anno_ids.append(tid)
+            
+            all_numbers.append(number_str)
 
         seq = []
-        for digit, conf, (x0, y0, x1, y1) in preds:
-            rid = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#00FF00", width=2, tags=("front_drawing"))
+        for digit, conf, (x0, y0, x1, y1) in digit_preds:
+            rid = self.canvas.create_rectangle(x0, y0, x1, y1, outline=DIGIT_BOX_COLOR, width=2, tags=("front_drawing"))
             self._anno_ids.append(rid)
             label = f"{digit}" if isinstance(digit, int) else digit
             label_y = y0 - 10 if y0 > 15 else y1 + 10
-            tid = self.canvas.create_text((x0 + x1) // 2, label_y, text=label, fill="#00FF00", font=("Helvetica", 14, "bold"), tags=("front_drawing"))
+            tid = self.canvas.create_text((x0 + x1) // 2, label_y, text=label, fill=DIGIT_BOX_COLOR, font=("Helvetica", 14, "bold"), tags=("front_drawing"))
             self._anno_ids.append(tid)
             seq.append(str(label))
 
+        # Update display
         if hasattr(self, "predict_label"):
-            self.predict_label.config(text=f"Prediction: {' '.join(seq)}")
+            prediction_text = f"Numbers: {', '.join(all_numbers)}" if all_numbers else "Prediction: —"
+            self.predict_label.config(text=prediction_text)
         if hasattr(self, "status"):
-            self.status.config(text="Multi-digit prediction complete.")
+            self.status.config(text=f"Detected {len(formatted_groups)} number(s) with {len(digit_preds)} total digits.")
+
+        return formatted_groups
 
     def run(self):
         self.root.mainloop()
