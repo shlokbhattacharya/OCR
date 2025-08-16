@@ -9,8 +9,6 @@ import numpy as np
 from tensorflow.keras.models import load_model
 import cv2
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-import threading
 
 THRESHOLD_VALUE = 50
 STANDARD_STROKE_WIDTH = 5
@@ -151,12 +149,6 @@ class OptimizedDigitDrawGUI:
             self.root.after_cancel(self._prediction_timer)
         self._prediction_timer = self.root.after(self._debounce_delay, self.predict_and_display)
 
-    @lru_cache(maxsize=128)
-    def _cached_preprocess(self, image_hash, crop_coords):
-        """Cache preprocessing results for identical crops"""
-        x0, y0, x1, y1 = crop_coords
-        crop = self.image.crop((x0, y0, x1, y1))
-        return self.preprocess_for_mnist(crop)
 
     def preprocess_batch(self, crops_and_coords):
         """
