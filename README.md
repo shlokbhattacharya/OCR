@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 ### Starting the Application
 ```bash
-python src/OCR_main.py
+python src/ocr_main.py
 ```
 
 ### Using the Interface
