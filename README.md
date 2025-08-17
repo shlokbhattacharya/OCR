@@ -36,8 +36,8 @@ Typical performance improvements: **3-10x faster** prediction times compared to 
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/shlokbhattacharya/OCR.git
-cd OCR
+git clone https://github.com/shlokbhattacharya/ocr_visualization.git
+cd ocr_visualization
 
 # Install dependencies
 pip install -r requirements.txt
