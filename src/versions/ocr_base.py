@@ -141,6 +141,10 @@ class BaseDigitDrawGUI:
         self.setup_drawing_state()
         self.predict_label.config(text="Prediction: —")
 
+        # Start on pen mode
+        if self.eraser_btn["text"] == "Pen":
+            self.toggle_eraser()
+
     def toggle_eraser(self):
         if self.eraser_btn["text"] == "Eraser":
             self.stroke_color = "black"

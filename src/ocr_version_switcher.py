@@ -163,7 +163,7 @@ class OCRVersionSwitcher:
             self.version_var.set("Standard")
             self.version_label.configure(foreground="red")
             self.switch_btn.config(text="Switch to Optimized")
-            
+
         self.setup_current_version()
         
     def update_performance_stats(self, prediction_time):
