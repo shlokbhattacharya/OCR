@@ -2,7 +2,6 @@ from tkinter import messagebox
 from tensorflow.keras.models import load_model
 from ocr_version_switcher import OCRVersionSwitcher
 
-# Main function
 def main():
     try:
         model = load_model('src/model/CNN_model.keras')
