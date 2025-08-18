@@ -214,27 +214,20 @@ class StandardDigitDrawGUI(BaseDigitDrawGUI):
         
         return formatted_groups
 
-    
     def predict_and_display(self):
-        """
-        Detects all digits, groups them into numbers, predicts each, and updates display.
-        """
-        # Clear previous annotations
-        if hasattr(self, "_anno_ids"):
-            for _id in self._anno_ids:
-                try:
-                    self.canvas.delete(_id)
-                except Exception:
-                    pass
-        self._anno_ids = []
+        digit_preds, formatted_groups = self.predict_nums()
+        if not digit_preds or not formatted_groups:
+            self.predict_label.config(text="Prediction: —")
 
+        self.display_bboxes(digit_preds, formatted_groups)
+    
+    def predict_nums(self):
+        """
+        Detects all digits, groups them into numbers and predicts each.
+        """
         boxes = self.find_digit_bboxes(self.image)
         if not boxes:
-            if hasattr(self, "predict_label"):
-                self.predict_label.config(text="Prediction: —")
-            if hasattr(self, "status"):
-                self.status.config(text="No digits detected.")
-            return
+            return None, None
 
         # Get individual digit predictions
         digit_preds = []
@@ -258,6 +251,18 @@ class StandardDigitDrawGUI(BaseDigitDrawGUI):
         # Group digits into numbers
         groups = self.group_digits(digit_preds)
         formatted_groups = self.format_grouped_predictions(groups)
+
+        return digit_preds, formatted_groups
+    
+    def display_bboxes(self, digit_preds, formatted_groups):
+        # Clear previous annotations
+        if hasattr(self, "_anno_ids"):
+            for _id in self._anno_ids:
+                try:
+                    self.canvas.delete(_id)
+                except Exception:
+                    pass
+        self._anno_ids = []
 
         # Draw annotations for each group
         all_numbers = []
@@ -293,5 +298,3 @@ class StandardDigitDrawGUI(BaseDigitDrawGUI):
             self.predict_label.config(text=prediction_text)
         if hasattr(self, "status"):
             self.status.config(text=f"Detected {len(formatted_groups)} number(s) with {len(digit_preds)} total digits.")
-
-        return formatted_groups

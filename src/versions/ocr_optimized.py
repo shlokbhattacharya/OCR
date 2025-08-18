@@ -200,28 +200,24 @@ class OptimizedDigitDrawGUI(BaseDigitDrawGUI):
         groups.sort(key=lambda g: (round((g[0][2][1] + g[0][2][3]) / 2, -1), g[0][2][0]))
         
         return groups
-
+    
     def predict_and_display(self):
-        """Optimized prediction with batch processing"""
-        # Clear previous annotations
-        for _id in self._anno_ids:
-            try:
-                self.canvas.delete(_id)
-            except:
-                pass
-        self._anno_ids = []
+        digit_preds, formatted_groups = self.predict_nums()
+        if not digit_preds or not formatted_groups:
+            self.predict_label.config(text="Prediction: —")
+        
+        self.display_bboxes(digit_preds, formatted_groups)
 
+    def predict_nums(self):
+        """Optimized prediction with batch processing"""
         # Use optimized bounding box detection
         boxes = self.find_digit_bboxes_optimized(self.image)
         if not boxes:
-            self.predict_label.config(text="Prediction: —")
-            self.status.config(text="No digits detected.")
-            return
+            return None, None
 
         # Prepare crops for batch processing
         crops_and_coords = []
         for coords in boxes:
-            x0, y0, x1, y1 = coords
             crop = self.image.crop(coords)
             crops_and_coords.append((crop, coords))
 
@@ -230,7 +226,7 @@ class OptimizedDigitDrawGUI(BaseDigitDrawGUI):
         
         if batch_array.size == 0:
             self.predict_label.config(text="Prediction: —")
-            return
+            return None, None
 
         # Batch prediction (much faster than individual predictions)
         batch_predictions = self.model.predict(batch_array, verbose=0)
@@ -252,6 +248,17 @@ class OptimizedDigitDrawGUI(BaseDigitDrawGUI):
         # Use optimized grouping
         groups = self.group_digits_optimized(digit_preds)
         formatted_groups = self.format_grouped_predictions(groups)
+
+        return digit_preds, formatted_groups
+    
+    def display_bboxes(self, digit_preds, formatted_groups):
+        # Clear previous annotations
+        for _id in self._anno_ids:
+            try:
+                self.canvas.delete(_id)
+            except:
+                pass
+        self._anno_ids = []
 
         # Draw annotations
         all_numbers = []
@@ -287,7 +294,6 @@ class OptimizedDigitDrawGUI(BaseDigitDrawGUI):
         self.predict_label.config(text=prediction_text)
         self.status.config(text=f"Detected {len(formatted_groups)} number(s) with {len(digit_preds)} total digits.")
 
-        return formatted_groups
 
     def format_grouped_predictions(self, sorted_groups):
         """Same as before, but more efficient"""
