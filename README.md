@@ -162,7 +162,7 @@ Could not load model: [Errno 2] No such file or directory: 'src/model/CNN_model.
 Solution: Ensure your trained model file is placed at `src/model/CNN_model.keras`
 
 **Import errors**:
-- Ensure all dependencies are installed: `pip install -r requirements.txt`
+- Ensure all dependencies are installed: `pip install -r requirements_local.txt`
 - Check Python version compatibility (3.7+)
 
 **Performance issues**:
