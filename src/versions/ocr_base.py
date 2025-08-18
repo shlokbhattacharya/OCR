@@ -1,8 +1,12 @@
 from constants import *
-import tkinter as tk
-from tkinter import ttk
 from PIL import Image, ImageDraw
 
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except:
+    tk = None
+    ttk = None
 
 class BaseDigitDrawGUI:
     """Base class with common functionality for both versions"""
