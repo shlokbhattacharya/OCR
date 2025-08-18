@@ -207,7 +207,6 @@ def draw_bounding_boxes_on_canvas(canvas_data, digit_preds, formatted_groups):
 def main():
     st.set_page_config(
         page_title="OCR Performance Comparison",
-        page_icon="🔍",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -216,7 +215,7 @@ def main():
     initialize_session_state()
     
     # Header
-    st.title("🔍 OCR Performance Comparison")
+    st.title("OCR Performance Comparison")
     st.markdown("**Compare Optimized vs Standard OCR Processing Performance**")
 
     with st.expander("🔍 Difference Between Optimized and Standard Implementations"):
