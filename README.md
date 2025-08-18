@@ -2,6 +2,10 @@
 
 A real-time handwritten digit recognition application that compares the performance between optimized and standard implementations of OCR processing. Built with Python, TensorFlow/Keras, OpenCV, and Tkinter.
 
+## Web App 
+
+https://shlokbhattacharya-ocrvisualization.streamlit.app/
+
 ## 🚀 Features
 
 - **Real-time digit recognition** using CNN model trained on MNIST dataset
@@ -40,7 +44,7 @@ git clone https://github.com/shlokbhattacharya/ocr_visualization.git
 cd ocr_visualization
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r requirements_local.txt
 ```
 
 ## 🎮 Usage
