@@ -6,6 +6,8 @@ A real-time handwritten digit recognition application that compares the performa
 
 https://shlokbhattacharya-ocrvisualization.streamlit.app/
 
+**Note:** Local deployment runs significantly faster than web app.
+
 ## 🚀 Features
 
 - **Real-time digit recognition** using CNN model trained on MNIST dataset
